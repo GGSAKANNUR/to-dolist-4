@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Timed Reminders</title>
+    <style>
+        /* 1. Dark Blue Background */
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background-color: #0f172a; /* Dark Blue */
+            display: flex; 
+            justify-content: center; 
+            padding: 20px; 
+            min-height: 100vh; 
+            margin: 0; 
+            color: #e2e8f0; /* Light text for page */
+        }
+
+        .container { 
+            background: #ffffff; /* White container for contrast */
+            padding: 2rem; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); 
+            width: 100%; 
+            max-width: 450px; 
+            display: flex; 
+            flex-direction: column; 
+        }
+
+        h2 { text-align: center; color: #1e293b; margin-top: 0; } /* Dark text inside container */
+        .input-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; }
+        
+        input { padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 16px; outline: none; transition: border-color 0.2s; background-color: #f8fafc; color: #333;}
+        input:focus { border-color: #0f172a; }
+        
+        button { padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .primary-btn { background-color: #0f172a; color: white; } /* Dark Blue Button */
+        .text-btn { background:none; color:#0f172a; text-decoration:underline; padding: 10px; font-size: 0.9em; }
+        
+        #app-section, #reg-form { display: none; }
+        ul { list-style: none; padding: 0; margin-top: 20px; }
+        
+        li { 
+            background: #f1f5f9; 
+            border: 1px solid #cbd5e1; 
+            padding: 15px; 
+            margin-bottom: 10px; 
+            border-left: 5px solid #0f172a; /* Dark Blue border */
+            border-radius: 4px; 
+            transition: all 0.3s ease; 
+            color: #334155; /* Dark grey text for readability */
+        }
+        
+        .item-header { display: flex; justify-content: space-between; align-items: flex-start; }
+        .controls { display: flex; gap: 8px; margin-top: 10px; }
+        
+        .done-btn { background-color: #10b981; color: white; flex: 1; }
+        .delete-btn { background-color: #ef4444; color: white; flex: 1; }
+        .cancel-btn { background-color: #64748b; color: white; flex: 1; display: none; }
+        
+        .locked { border-left-color: #64748b; background-color: #e2e8f0; color: #475569; }
+        .countdown { font-size: 11px; color: #b91c1c; font-weight: bold; display: block; margin-top: 5px; }
+
+        /* Toast Notification Styles - Updated for Light mode on Dark BG */
+        #toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background-color: #ffffff; color: #0f172a; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-size: 14px; font-weight: 600; opacity: 0; animation: fadeInOut 3s forwards; display: flex; align-items: center; gap: 8px; border: 1px solid #cbd5e1; }
+        @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(20px); } 10% { opacity: 1; transform: translateY(0); } 90% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-20px); } }
+    </style>
+</head>
+<body>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<!-- AUTH SECTION -->
+<div class="container" id="auth-section">
+    <div id="login-form">
+        <h2>🔐 Login</h2>
+        <div class="input-group">
+            <input type="text" id="loginUser" placeholder="Username">
+            <input type="password" id="loginPass" placeholder="Password">
+            <button class="primary-btn" onclick="login()">Sign In</button>
+        </div>
+        <button class="text-btn" onclick="toggleAuth(true)">Register</button>
+    </div>
+    <div id="reg-form">
+        <h2>📝 Register</h2>
+        <div class="input-group">
+            <input type="text" id="regUser" placeholder="Username">
+            <input type="password" id="regPass" placeholder="Password">
+            <button class="primary-btn" onclick="register()">Create Account</button>
+        </div>
+        <button class="text-btn" onclick="toggleAuth(false)">Back to Login</button>
+    </div>
+</div>
+
+<!-- APP SECTION -->
+<div class="container" id="app-section">
+    <h2 id="welcomeMsg">🔔 Reminders</h2>
+    <div class="input-group">
+        <input type="text" id="taskInput" placeholder="Task...">
+        <input type="date" id="dateInput">
+        <button class="primary-btn" onclick="addReminder()">Set Reminder</button>
+    </div>
+    <ul id="reminderList"></ul>
+    <button onclick="logout()" style="width:100%; margin-top:20px; background:#475569; color:white;">Logout</button>
+</div>
+
+<script>
+    let currentUser = null;
+
+    // --- UTILITIES ---
+    const showToast = (message, icon = 'ℹ️') => {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    };
+
+    // Helper: Convert yyyy-mm-dd to dd-mm-yyyy
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+
+    const toggleAuth = (isReg) => {
+        document.getElementById('login-form').style.display = isReg ? 'none' : 'block';
+        document.getElementById('reg-form').style.display = isReg ? 'block' : 'none';
+    };
+
+    function logout() {
+        currentUser = null;
+        location.reload();
+    }
+
+    // --- AUTH LOGIC ---
+    function register() {
+        const u = document.getElementById('regUser').value.trim();
+        const p = document.getElementById('regPass').value.trim();
+        if(u && p) { 
+            if(localStorage.getItem(`u_${u}`)) {
+                showToast("User already exists!", "⚠️");
+            } else {
+                localStorage.setItem(`u_${u}`, p); 
+                showToast("Registration Complete!", "✅"); 
+                toggleAuth(false); 
+            }
+        } else {
+            showToast("Please fill in all fields", "⚠️");
+        }
+    }
+
+    function login() {
+        const u = document.getElementById('loginUser').value.trim();
+        const p = document.getElementById('loginPass').value.trim();
+        if(localStorage.getItem(`u_${u}`) === p) { 
+            currentUser = u; 
+            startApp(); 
+            showToast(`Welcome back, ${u}!`, "👋"); 
+        }
+        else showToast("Invalid credentials", "🚫");
+    }
+
+    function startApp() {
+        document.getElementById('auth-section').style.display = 'none';
+        document.getElementById('app-section').style.display = 'block';
+        document.getElementById('welcomeMsg').innerText = `🔔 ${currentUser}'s List`;
+        loadItems();
+    }
+
+    // --- CORE TASK LOGIC ---
+    function addReminder() {
+        const task = document.getElementById('taskInput').value.trim();
+        const date = document.getElementById('dateInput').value;
+        if(!task || !date) return showToast("Please enter a task and date", "⚠️");
+        
+        const data = JSON.parse(localStorage.getItem(`data_${currentUser}`) || "[]");
+        data.push({ task, date, doneDate: null }); // Date stored as standard yyyy-mm-dd for sorting
+        localStorage.setItem(`data_${currentUser}`, JSON.stringify(data));
+        
+        document.getElementById('taskInput').value = '';
+        document.getElementById('dateInput').value = '';
+        
+        showToast("Reminder added!", "➕");
+        loadItems();
+    }
+
+    function loadItems() {
+        const list = document.getElementById('reminderList');
+        list.innerHTML = '';
+        let data = JSON.parse(localStorage.getItem(`data_${currentUser}`) || "[]");
+
+        // --- SORTING LOGIC ---
+        // Sort by the raw ISO date (yyyy-mm-dd) so 01-01-2024 comes before 02-01-2023
+        data.sort((a, b) => new Date(a.date) - new Date(b.date));
+        localStorage.setItem(`data_${currentUser}`, JSON.stringify(data));
+
+        const now = new Date().getTime();
+
+        data.forEach((item, i) => {
+            const li = document.createElement('li');
+            let statusHtml = "";
+            let buttonHtml = "";
+            let diffDays = 0;
+
+            if (item.doneDate) {
+                li.className = 'locked';
+                const waitPeriod = 1 * 24 * 60 * 60 * 1000; // 1 Day
+                const timePassed = now - item.doneDate;
+                const remainingMs = waitPeriod - timePassed;
+                diffDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24)); 
+                const remainingHours = Math.ceil(remainingMs / (1000 * 60 * 60));
+
+                statusHtml = remainingMs > 0 
+                    ? `<span class="countdown">🔒 Delete in ${remainingHours}h</span>` 
+                    : `<span class="countdown" style="color:green">✅ Ready for deletion</span>`;
+                
+                const canDelete = remainingMs <= 0;
+                buttonHtml = `<button class="delete-btn" 
+                    onclick="deleteItem(${i})" 
+                    ${canDelete ? '' : 'disabled'}>
+                    ${canDelete ? 'Delete' : 'Locked'}
+                </button>`;
+            } else {
+                const confirmId = `confirm-${i}`;
+                const cancelId = `cancel-${i}`;
+                
+                buttonHtml = `
+                    <button id="done-${i}" class="done-btn" onclick="initiateDone(${i})">Done</button>
+                    <button id="${cancelId}" class="cancel-btn" onclick="resetButtons(${i})">Cancel</button>
+                `;
+            }
+
+            li.innerHTML = `
+                <div class="item-header">
+                    <div><strong>${item.task}</strong><br><small>📅 Due: ${formatDate(item.date)}</small></div>
+                    ${statusHtml}
+                </div>
+                <div class="controls">
+                    ${buttonHtml}
+                </div>
+            `;
+            list.appendChild(li);
+        });
+    }
+
+    // --- INTERACTION LOGIC ---
+
+    function initiateDone(i) {
+        const doneBtn = document.getElementById(`done-${i}`);
+        const cancelBtn = document.getElementById(`cancel-${i}`);
+
+        doneBtn.innerText = "Lock & Delete in 24h?";
+        doneBtn.style.backgroundColor = "#b91c1c"; 
+        doneBtn.onclick = function() { markDone(i); };
+        
+        cancelBtn.style.display = "block";
+    }
+
+    function resetButtons(i) {
+        loadItems();
+    }
+
+    function markDone(i) {
+        const data = JSON.parse(localStorage.getItem(`data_${currentUser}`));
+        data[i].doneDate = new Date().getTime();
+        localStorage.setItem(`data_${currentUser}`, JSON.stringify(data));
+        showToast("Task locked for 24 hours!", "🔒");
+        loadItems();
+    }
+
+    function deleteItem(i) {
+        const data = JSON.parse(localStorage.getItem(`data_${currentUser}`));
+        const waitPeriod = 1 * 24 * 60 * 60 * 1000; // 1 Day
+        const now = new Date().getTime();
+        const timePassed = now - data[i].doneDate;
+        
+        if (timePassed < waitPeriod) {
+            const remainingHours = Math.ceil((waitPeriod - timePassed) / (1000 * 60 * 60));
+            showToast(`Wait ${remainingHours}h before deleting`, "⏳");
+            loadItems(); 
+        } else {
+            data.splice(i, 1);
+            localStorage.setItem(`data_${currentUser}`, JSON.stringify(data));
+            showToast("Item deleted", "🗑️");
+            loadItems();
+        }
+    }
+</script>
+</body>
+</html>
