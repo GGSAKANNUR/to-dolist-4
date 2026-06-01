@@ -294,5 +294,64 @@
         }
     }
 </script>
+<!-- NEW EVENT SCRIPT -->
+<script>
+    // --- EVENT LOGIC ---
+    
+    // Local helper to guarantee dd-mm-yyyy format specifically for the event side
+    function formatEventDate(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-'); // Input is yyyy-mm-dd
+        return `${parts[2]}-${parts[1]}-${parts[0]}`; // Returns dd-mm-yyyy
+    }
+
+    function addEvent() {
+        const event = document.getElementById('eventInput').value.trim();
+        const date = document.getElementById('eventDateInput').value;
+        if(!event || !date) return showToast("Please enter an event and date", "⚠️");
+        
+        const data = JSON.parse(localStorage.getItem(`events_${currentUser}`) || "[]");
+        data.push({ event, date }); 
+        localStorage.setItem(`events_${currentUser}`, JSON.stringify(data));
+        
+        document.getElementById('eventInput').value = '';
+        document.getElementById('eventDateInput').value = '';
+        
+        showToast("Event recorded!", "📅");
+        loadEvents();
+    }
+
+    function loadEvents() {
+        const list = document.getElementById('eventList');
+        list.innerHTML = '';
+        let data = JSON.parse(localStorage.getItem(`events_${currentUser}`) || "[]");
+
+        // Auto arrange date-wise (chronological order)
+        data.sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+        // Save the sorted array back to localStorage so it stays arranged
+        localStorage.setItem(`events_${currentUser}`, JSON.stringify(data));
+
+        data.forEach((item) => {
+            const li = document.createElement('li');
+            // No controls rendered to ensure it is not editable or deletable
+            // Date formatted strictly to dd-mm-yyyy using the local helper
+            li.innerHTML = `
+                <div class="item-header">
+                    <div><strong>${item.event}</strong><br><small>📅 Date: ${formatEventDate(item.date)}</small></div>
+                </div>
+            `;
+            list.appendChild(li);
+        });
+    }
+
+    // Hook into the existing startApp function to show the Event section and load events on login
+    const originalStartApp = startApp;
+    startApp = function() {
+        originalStartApp();
+        document.getElementById('event-section').style.display = 'block';
+        loadEvents();
+    };
+</script>
 </body>
 </html>
