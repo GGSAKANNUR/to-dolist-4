@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Timed Reminders</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         /* 1. Dark Blue Background */
         body { 
@@ -82,8 +83,8 @@
     <div id="login-form">
         <h2>🔐 Login</h2>
         <div class="input-group">
-            <input type="text" id="loginUser" placeholder="Username">
-            <input type="password" id="loginPass" placeholder="Password">
+            <input type="text" id="loginUser" placeholder="Username" onkeydown="if(event.key === 'Enter') login()">
+            <input type="password" id="loginPass" placeholder="Password" onkeydown="if(event.key === 'Enter') login()">
             <button class="primary-btn" onclick="login()">Sign In</button>
         </div>
         <button class="text-btn" onclick="toggleAuth(true)">Register</button>
@@ -108,7 +109,12 @@
         <button class="primary-btn" onclick="addReminder()">Set Reminder</button>
     </div>
     <ul id="reminderList"></ul>
-    <button onclick="logout()" style="width:100%; margin-top:20px; background:#475569; color:white;">Logout</button>
+    <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button class="primary-btn" onclick="downloadBackup()" style="flex: 1;">Download Backup</button>
+        <button class="primary-btn" onclick="triggerUpload()" style="flex: 1;">Upload Backup</button>
+    </div>
+    <input type="file" id="backupFileInput" style="display: none;" accept=".json" onchange="uploadBackup(event)">
+    <button onclick="logout()" style="width:100%; margin-top:10px; background:#475569; color:white;">Logout</button>
 </div>
 
 <!-- EVENT SECTION -->
@@ -120,6 +126,20 @@
         <button class="primary-btn" onclick="addEvent()">Record Event</button>
     </div>
     <ul id="eventList"></ul>
+
+    <!-- SUPABASE SYNC SECTION -->
+    <div style="margin-top: 25px; border-top: 1px solid #cbd5e1; padding-top: 20px; color: #1e293b;">
+        <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 1.1em; color: #1e293b;">⚡ Supabase Sync</h3>
+        <div class="input-group">
+            <input type="text" id="supabaseUrl" placeholder="Supabase Project URL" style="font-size: 14px; padding: 10px;">
+            <input type="password" id="supabaseKey" placeholder="Anon API Key" style="font-size: 14px; padding: 10px;">
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 10px;">
+            <button class="primary-btn" onclick="saveSupabaseSettings()" style="flex: 1.2; padding: 10px; font-size: 13px; background-color: #475569; border-radius: 6px;">Save Keys</button>
+            <button class="primary-btn" onclick="uploadToSupabase()" style="flex: 1; padding: 10px; font-size: 13px; background-color: #10b981; border-radius: 6px;">Upload</button>
+            <button class="primary-btn" onclick="downloadFromSupabase()" style="flex: 1; padding: 10px; font-size: 13px; background-color: #3b82f6; border-radius: 6px;">Download</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -212,11 +232,35 @@
         // --- SORTING LOGIC ---
         // Sort by the raw ISO date (yyyy-mm-dd) so 01-01-2024 comes before 02-01-2023
         data.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // --- FILTER AND AUTO-DELETE ---
+        const today = new Date();
+        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+        data = data.filter(item => {
+            const parts = item.date.split('-');
+            const targetMidnight = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+            const diffTime = targetMidnight.getTime() - todayMidnight.getTime();
+            const diffDaysTarget = Math.round(diffTime / (1000 * 60 * 60 * 24));
+            
+            return diffDaysTarget >= -2; // Automatically deletes if diffDaysTarget < -2 (more than 2 days after target date)
+        });
+
         localStorage.setItem(`data_${currentUser}`, JSON.stringify(data));
 
         const now = new Date().getTime();
 
         data.forEach((item, i) => {
+            const parts = item.date.split('-');
+            const targetMidnight = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+            const diffTime = targetMidnight.getTime() - todayMidnight.getTime();
+            const diffDaysTarget = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+            // Hide reminders that are more than 2 days in the future
+            if (diffDaysTarget > 2) {
+                return;
+            }
+
             const li = document.createElement('li');
             let statusHtml = "";
             let buttonHtml = "";
@@ -358,12 +402,207 @@
         });
     }
 
+    // --- BACKUP LOGIC ---
+    function downloadBackup() {
+        if (!currentUser) return;
+        const backupData = {
+            reminders: JSON.parse(localStorage.getItem(`data_${currentUser}`) || "[]"),
+            events: JSON.parse(localStorage.getItem(`events_${currentUser}`) || "[]")
+        };
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${currentUser}_reminder_backup.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast("Backup downloaded!", "📥");
+    }
+
+    function triggerUpload() {
+        document.getElementById('backupFileInput').click();
+    }
+
+    function uploadBackup(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (data && (Array.isArray(data.reminders) || Array.isArray(data.events))) {
+                    if (data.reminders) {
+                        localStorage.setItem(`data_${currentUser}`, JSON.stringify(data.reminders));
+                    }
+                    if (data.events) {
+                        localStorage.setItem(`events_${currentUser}`, JSON.stringify(data.events));
+                    }
+                    showToast("Backup uploaded successfully!", "📤");
+                    loadItems();
+                    loadEvents();
+                } else {
+                    showToast("Invalid backup file format", "⚠️");
+                }
+            } catch (err) {
+                showToast("Failed to read backup file", "⚠️");
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    // --- SUPABASE INTEGRATION LOGIC ---
+    let supabase = null;
+
+    function initSupabase() {
+        const url = localStorage.getItem('https://ypmuqujlvywbajksxyce.supabase.co');
+        const key = localStorage.getItem('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwbXVxdWpsdnl3YmFqa3N4eWNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxODcyNzgsImV4cCI6MjA5Nzc2MzI3OH0.39MPIZqQhOn2zcFNmfeD3OmMCj4bJSE4vT3XqPgmEeE');
+        if (url && key) {
+            try {
+                supabase = window.supabase.createClient(url, key);
+            } catch (e) {
+                console.error("Failed to initialize Supabase client:", e);
+                supabase = null;
+            }
+        }
+    }
+
+    function saveSupabaseSettings() {
+        const url = document.getElementById('supabaseUrl').value.trim();
+        const key = document.getElementById('supabaseKey').value.trim();
+        localStorage.setItem('supabase_url', url);
+        localStorage.setItem('supabase_key', key);
+        initSupabase();
+        showToast("Settings saved!", "✅");
+    }
+
+    function loadSupabaseSettings() {
+        const url = localStorage.getItem('supabase_url') || '';
+        const key = localStorage.getItem('supabase_key') || '';
+        const urlInput = document.getElementById('supabaseUrl');
+        const keyInput = document.getElementById('supabaseKey');
+        if (urlInput) urlInput.value = url;
+        if (keyInput) keyInput.value = key;
+    }
+
+    async function uploadToSupabase() {
+        initSupabase();
+        if (!supabase) {
+            return showToast("Please save valid Supabase credentials first", "⚠️");
+        }
+        if (!currentUser) return;
+
+        showToast("Uploading to Supabase...", "⏳");
+        try {
+            const reminders = JSON.parse(localStorage.getItem(`data_${currentUser}`) || "[]");
+            const events = JSON.parse(localStorage.getItem(`events_${currentUser}`) || "[]");
+
+            // 1. Upload Reminders - Delete existing for user first, then insert
+            const { error: delRemindersError } = await supabase
+                .from('reminders')
+                .delete()
+                .eq('username', currentUser);
+
+            if (delRemindersError) throw delRemindersError;
+
+            if (reminders.length > 0) {
+                const rows = reminders.map(r => ({
+                    username: currentUser,
+                    task: r.task,
+                    date: r.date,
+                    done_date: r.doneDate
+                }));
+                const { error: insRemindersError } = await supabase
+                    .from('reminders')
+                    .insert(rows);
+                if (insRemindersError) throw insRemindersError;
+            }
+
+            // 2. Upload Events - Delete existing for user first, then insert
+            const { error: delEventsError } = await supabase
+                .from('events')
+                .delete()
+                .eq('username', currentUser);
+
+            if (delEventsError) throw delEventsError;
+
+            if (events.length > 0) {
+                const rows = events.map(e => ({
+                    username: currentUser,
+                    event: e.event,
+                    date: e.date
+                }));
+                const { error: insEventsError } = await supabase
+                    .from('events')
+                    .insert(rows);
+                if (insEventsError) throw insEventsError;
+            }
+
+            showToast("Uploaded successfully to Supabase!", "✅");
+        } catch (err) {
+            console.error(err);
+            showToast(`Upload failed: ${err.message || err}`, "❌");
+        }
+    }
+
+    async function downloadFromSupabase() {
+        initSupabase();
+        if (!supabase) {
+            return showToast("Please save valid Supabase credentials first", "⚠️");
+        }
+        if (!currentUser) return;
+
+        showToast("Downloading from Supabase...", "⏳");
+        try {
+            // 1. Fetch Reminders
+            const { data: dbReminders, error: errReminders } = await supabase
+                .from('reminders')
+                .select('*')
+                .eq('username', currentUser);
+
+            if (errReminders) throw errReminders;
+
+            // 2. Fetch Events
+            const { data: dbEvents, error: errEvents } = await supabase
+                .from('events')
+                .select('*')
+                .eq('username', currentUser);
+
+            if (errEvents) throw errEvents;
+
+            // Map data structure back to client
+            const reminders = dbReminders.map(r => ({
+                task: r.task,
+                date: r.date,
+                doneDate: r.done_date ? parseInt(r.done_date, 10) : null
+            }));
+
+            const events = dbEvents.map(e => ({
+                event: e.event,
+                date: e.date
+            }));
+
+            localStorage.setItem(`data_${currentUser}`, JSON.stringify(reminders));
+            localStorage.setItem(`events_${currentUser}`, JSON.stringify(events));
+
+            showToast("Downloaded successfully from Supabase!", "✅");
+            loadItems();
+            loadEvents();
+        } catch (err) {
+            console.error(err);
+            showToast(`Download failed: ${err.message || err}`, "❌");
+        }
+    }
+
     // Hook into the existing startApp function to show the Event section and load events on login
     const originalStartApp = startApp;
     startApp = function() {
         originalStartApp();
         document.getElementById('event-section').style.display = 'block';
         loadEvents();
+        loadSupabaseSettings();
+        initSupabase();
     };
 </script>
 </body>
